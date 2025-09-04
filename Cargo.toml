@@ -1,0 +1,13 @@
+[package]
+name = "rustin"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+colored = "3.0.0"
+sysinfo = "0.37.0"
+whoami = "1.6.1"
+regex = "1.11.2"
+term_size = "0.3.2"
+unicode-width = "0.2.1"
+strip-ansi-escapes = "0.2.1"
