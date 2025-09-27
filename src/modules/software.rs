@@ -91,6 +91,8 @@ fn get_package_count() -> String {
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
         .unwrap_or_else(|_| "0".to_string());
 
+    // .arg("pacman -Q | wc -l")
+    // .arg("rpm -qa | wc -l")
     format!(
         "{} (dpkg), {} (apt), {} (brew), {} (flatpak)",
         dpkg_count, apt_count, flatpak_count, brew

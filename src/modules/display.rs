@@ -1,24 +1,63 @@
+use display_info::DisplayInfo;
 use std::env;
 use std::fs;
 use std::process::Command;
 use sysinfo::System;
 
+// pub struct InfoLine {
+//     pub label: String,
+//     pub value: String,
+// }
+
 pub fn get_display_info() -> Vec<(String, String)> {
+    // pub fn get_display_info() -> Vec<InfoLine> {
     let mut info = Vec::new();
 
     let wm_de = get_wm_de();
     info.push(("WM/DE".to_string(), wm_de));
+    // info.push(InfoLine {
+    //     label: "WM/DE".to_string(),
+    //     value: wm_de,
+    // });
 
     let swap = get_swap_info();
     info.push(("Swap".to_string(), swap));
+    // info.push(InfoLine {
+    //     label: "SWAP".to_string(),
+    //     value: swap,
+    // });
 
     let architecture = get_architecture();
     info.push(("Arch".to_string(), architecture));
+    // info.push(InfoLine {
+    //     label: "Arch".to_string(),
+    //     value: architecture,
+    // });
 
     let cursor = get_cursor_theme();
     info.push(("Cursor".to_string(), cursor));
+    // info.push(InfoLine {
+    //     label: "Cursor".to_string(),
+    //     value: cursor,
+    // });
+
+    let resolution = get_screen_resolution();
+    info.push(("Resolution".to_string(), resolution));
+    // info.push(InfoLine {
+    //     label: "Resolution".to_string(),
+    //     value: resolution,
+    // });
 
     info
+}
+
+fn get_screen_resolution() -> String {
+    if let Ok(display_infos) = DisplayInfo::all() {
+        if let Some(primary_display) = display_infos.iter().find(|d| d.is_primary) {
+            return format!("{}x{}", primary_display.width, primary_display.height);
+        }
+    }
+    "Unknown".to_string()
 }
 
 fn get_wm_de() -> String {
@@ -34,29 +73,18 @@ fn get_wm_de() -> String {
                     .unwrap_or_else(|| "unknown".to_string());
                 return format!("Hyprland {} (Wayland)", version);
             }
+            if let Ok(xdg_current_desktop) = env::var("XDG_CURRENT_DESKTOP") {
+                return format!("{} (X11)", xdg_current_desktop);
+            }
             return "Wayland".to_string();
         }
     }
 
     if let Ok(display) = env::var("DISPLAY") {
         if !display.is_empty() {
-            if let Ok(wm) = Command::new("wmctrl").arg("-m").output() {
-                if let Some(name) = String::from_utf8_lossy(&wm.stdout)
-                    .lines()
-                    .find(|line| line.starts_with("Name:"))
-                {
-                    let wm_name = name.replace("Name:", "").trim().to_string();
-                    let version = match wm_name.to_lowercase().as_str() {
-                        "gnome" => crate::utils::get_version("gnome-shell", &["--version"]),
-                        "xfce" | "xfwm4" => crate::utils::get_version("xfwm4", &["--version"]),
-                        "kde" | "kwin_x11" => crate::utils::get_version("kwin_x11", &["--version"]),
-                        _ => None,
-                    }
-                    .unwrap_or_else(|| "unknown".to_string());
-                    return format!("{} {} (X11)", wm_name, version);
-                }
+            if let Ok(xdg_current_desktop) = env::var("XDG_CURRENT_DESKTOP") {
+                return format!("{} (X11)", xdg_current_desktop);
             }
-            return "X11".to_string();
         }
     }
 
@@ -64,90 +92,57 @@ fn get_wm_de() -> String {
 }
 
 fn get_swap_info() -> String {
-    let system = System::new_all();
-    let total_swap = system.total_swap() as f64 / (1024.0 * 1024.0 * 1024.0);
-    let used_swap = system.used_swap() as f64 / (1024.0 * 1024.0 * 1024.0);
+    let mut system = System::new_all();
+    system.refresh_all();
+    let total_swap = system.total_swap() as f64 / (1024.0 * 1024.0);
+    let used_swap = system.used_swap() as f64 / (1024.0 * 1024.0);
 
-    if total_swap > 0.0 {
-        let percentage = (used_swap / total_swap) * 100.0;
-        format!(
-            "{:.1}G / {:.1}G ({:.0}%)",
-            used_swap, total_swap, percentage
-        )
-    } else {
-        "No swap".to_string()
-    }
+    format!("{:.1} MiB / {:.1} MiB", used_swap, total_swap)
 }
 
 fn get_architecture() -> String {
-    let arch = Command::new("uname")
+    Command::new("uname")
         .arg("-m")
         .output()
-        .ok()
-        .and_then(|output| {
-            if output.status.success() {
-                Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| whoami::arch().to_string());
-
-    arch
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .unwrap_or_else(|_| "Unknown".to_string())
 }
 
 fn get_cursor_theme() -> String {
-    let home_dir = env::var("HOME").unwrap_or_else(|_| "/".to_string());
-
-    if let Ok(output) = Command::new("gsettings")
-        .arg("get")
-        .arg("org.gnome.desktop.interface")
-        .arg("cursor-theme")
-        .output()
-    {
-        if output.status.success() {
-            let cursor_theme = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .trim_matches('\'')
-                .to_string();
-            if !cursor_theme.is_empty() && cursor_theme != "''" {
-                return cursor_theme;
-            }
-        }
-    }
-
-    let gtk_settings_path = format!("{}/.config/gtk-3.0/settings.ini", home_dir);
-    if let Ok(contents) = fs::read_to_string(&gtk_settings_path) {
-        for line in contents.lines() {
-            if line.trim().starts_with("gtk-cursor-theme-name=") {
-                let parts: Vec<&str> = line.splitn(2, '=').collect();
-                if parts.len() > 1 {
-                    let theme = parts[1]
-                        .trim()
-                        .trim_matches('"')
-                        .trim_matches('\'')
-                        .to_string();
-                    if !theme.is_empty() {
-                        return theme;
+    if let Ok(home_dir) = env::var("HOME") {
+        let gtk_settings_path = format!("{}/.config/gtk-3.0/settings.ini", home_dir);
+        if let Ok(contents) = fs::read_to_string(&gtk_settings_path) {
+            for line in contents.lines() {
+                if line.trim().starts_with("gtk-cursor-theme-name=") {
+                    let parts: Vec<&str> = line.splitn(2, '=').collect();
+                    if parts.len() > 1 {
+                        let theme = parts[1]
+                            .trim()
+                            .trim_matches('"')
+                            .trim_matches('\'')
+                            .to_string();
+                        if !theme.is_empty() {
+                            return theme;
+                        }
                     }
                 }
             }
         }
-    }
 
-    let xresources_path = format!("{}/.Xresources", home_dir);
-    if let Ok(contents) = fs::read_to_string(&xresources_path) {
-        for line in contents.lines() {
-            if line.trim().starts_with("Xcursor.theme:") {
-                let parts: Vec<&str> = line.splitn(2, ':').collect();
-                if parts.len() > 1 {
-                    let theme = parts[1]
-                        .trim()
-                        .trim_matches('"')
-                        .trim_matches('\'')
-                        .to_string();
-                    if !theme.is_empty() {
-                        return theme;
+        let xresources_path = format!("{}/.Xresources", home_dir);
+        if let Ok(contents) = fs::read_to_string(&xresources_path) {
+            for line in contents.lines() {
+                if line.trim().starts_with("Xcursor.theme:") {
+                    let parts: Vec<&str> = line.splitn(2, ':').collect();
+                    if parts.len() > 1 {
+                        let theme = parts[1]
+                            .trim()
+                            .trim_matches('"')
+                            .trim_matches('\'')
+                            .to_string();
+                        if !theme.is_empty() {
+                            return theme;
+                        }
                     }
                 }
             }
