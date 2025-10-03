@@ -96,7 +96,6 @@ fn get_terminal_version(terminal: &str) -> Option<String> {
 
     None
 }
-
 fn get_terminal_font() -> String {
     let term = env::var("TERM").unwrap_or_else(|_| "unknown".to_string());
 
@@ -154,10 +153,30 @@ fn get_kitty_font() -> Option<String> {
     for path in &config_paths {
         if let Ok(contents) = fs::read_to_string(path) {
             for line in contents.lines() {
-                if line.trim().starts_with("font_family") {
-                    let parts: Vec<&str> = line.splitn(2, ' ').collect();
+                let trimmed = line.trim();
+                if trimmed.starts_with("font_family") {
+                    let parts: Vec<&str> = trimmed.splitn(2, ' ').collect();
                     if parts.len() > 1 {
-                        return Some(parts[1].trim().trim_matches('"').to_string());
+                        let font_value = parts[1].trim();
+                        let font_clean = font_value
+                            .trim_matches(|c| c == '"' || c == '\'')
+                            .split('#')
+                            .next()
+                            .unwrap_or("")
+                            .trim();
+
+                        let font_final = if font_clean.starts_with("family=") {
+                            font_clean
+                                .trim_start_matches("family=")
+                                .trim_matches('"')
+                                .trim()
+                        } else {
+                            font_clean
+                        };
+
+                        if !font_final.is_empty() {
+                            return Some(font_final.to_string());
+                        }
                     }
                 }
             }
@@ -178,21 +197,43 @@ fn get_alacritty_font() -> Option<String> {
     for path in &config_paths {
         if let Ok(contents) = fs::read_to_string(path) {
             if path.ends_with(".toml") {
+                // TOML format parsing
                 for line in contents.lines() {
-                    if line.trim().starts_with("family =") {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("family =") {
                         let re = Regex::new(r#""([^"]+)""#).ok()?;
-                        if let Some(caps) = re.captures(line) {
+                        if let Some(caps) = re.captures(trimmed) {
                             return Some(caps[1].to_string());
                         }
                     }
                 }
             } else {
+                let mut in_font_section = false;
                 for line in contents.lines() {
-                    if line.trim().starts_with("family:") {
-                        let parts: Vec<&str> = line.splitn(2, ':').collect();
+                    let trimmed = line.trim();
+
+                    if trimmed.starts_with("font:") {
+                        in_font_section = true;
+                        continue;
+                    }
+
+                    if in_font_section && trimmed.starts_with("normal:") {
+                        continue;
+                    }
+
+                    if in_font_section && trimmed.starts_with("family:") {
+                        let parts: Vec<&str> = trimmed.splitn(2, ':').collect();
                         if parts.len() > 1 {
-                            return Some(parts[1].trim().replace('"', "").to_string());
+                            return Some(parts[1].trim().trim_matches('"').to_string());
                         }
+                    }
+
+                    if in_font_section
+                        && !trimmed.starts_with(' ')
+                        && !trimmed.starts_with('\t')
+                        && trimmed.contains(':')
+                    {
+                        in_font_section = false;
                     }
                 }
             }
