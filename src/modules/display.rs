@@ -53,10 +53,32 @@ pub fn get_display_info() -> Vec<(String, String)> {
 
 fn get_screen_resolution() -> String {
     if let Ok(display_infos) = DisplayInfo::all() {
-        if let Some(primary_display) = display_infos.iter().find(|d| d.is_primary) {
-            return format!("{}x{}", primary_display.width, primary_display.height);
+        if !display_infos.is_empty() {
+            // primary display
+            if let Some(primary_display) = display_infos.iter().find(|d| d.is_primary) {
+                return format!("{}x{}", primary_display.width, primary_display.height);
+            }
+            // If no primary, use the first display
+            if let Some(first_display) = display_infos.first() {
+                return format!("{}x{}", first_display.width, first_display.height);
+            }
         }
     }
+
+    // Fallback: using xrandr command
+    if let Ok(output) = Command::new("sh")
+        .arg("-c")
+        .arg("xrandr --current | grep '*' | head -1 | awk '{print $1}'")
+        .output()
+    {
+        if output.status.success() {
+            let resolution = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !resolution.is_empty() {
+                return resolution;
+            }
+        }
+    }
+
     "Unknown".to_string()
 }
 
@@ -109,6 +131,62 @@ fn get_architecture() -> String {
 }
 
 fn get_cursor_theme() -> String {
+    if let Ok(wayland_display) = env::var("WAYLAND_DISPLAY") {
+        if !wayland_display.is_empty() {
+            // Sway cursor theme detection
+            if env::var("SWAYSOCK").is_ok() {
+                if let Ok(home_dir) = env::var("HOME") {
+                    let sway_config_path = format!("{}/.config/sway/config", home_dir);
+                    if let Ok(contents) = fs::read_to_string(&sway_config_path) {
+                        for line in contents.lines() {
+                            let trimmed = line.trim();
+                            if trimmed.starts_with("seat") && trimmed.contains("cursor_theme") {
+                                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                                for part in parts {
+                                    if part.starts_with("cursor_theme") {
+                                        let theme_parts: Vec<&str> = part.splitn(2, ' ').collect();
+                                        if theme_parts.len() > 1 {
+                                            let theme = theme_parts[1].trim().trim_matches('"');
+                                            if !theme.is_empty() {
+                                                return theme.to_string();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Hyprland cursor theme detection
+            if env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() {
+                if let Ok(home_dir) = env::var("HOME") {
+                    let hypr_config_path = format!("{}/.config/hypr/hyprland.conf", home_dir);
+                    if let Ok(contents) = fs::read_to_string(&hypr_config_path) {
+                        for line in contents.lines() {
+                            if line.trim().starts_with("cursor:") {
+                                let parts: Vec<&str> = line.splitn(2, ':').collect();
+                                if parts.len() > 1 {
+                                    let theme = parts[1].trim().trim_matches(',').trim();
+                                    if !theme.is_empty() {
+                                        return theme.to_string();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Generic Wayland cursor theme
+            if let Ok(theme) = env::var("XCURSOR_THEME") {
+                return theme;
+            }
+        }
+    }
+
+    // X11 cursor detection (existing code)
     if let Ok(home_dir) = env::var("HOME") {
         let gtk_settings_path = format!("{}/.config/gtk-3.0/settings.ini", home_dir);
         if let Ok(contents) = fs::read_to_string(&gtk_settings_path) {
@@ -151,6 +229,23 @@ fn get_cursor_theme() -> String {
 
     if let Ok(theme) = env::var("XCURSOR_THEME") {
         return theme;
+    }
+
+    // Final fallback: check current cursor using command
+    if let Ok(output) = Command::new("sh")
+        .arg("-c")
+        .arg("gsettings get org.gnome.desktop.interface cursor-theme 2>/dev/null || echo Unknown")
+        .output()
+    {
+        if output.status.success() {
+            let theme = String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .trim_matches('\'')
+                .to_string();
+            if theme != "Unknown" {
+                return theme;
+            }
+        }
     }
 
     "Unknown".to_string()
