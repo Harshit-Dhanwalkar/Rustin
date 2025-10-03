@@ -49,16 +49,29 @@ pub fn get_hardware_info() -> Vec<(String, String)> {
     ));
 
     // Disk info
-    for disk in disks.list() {
+    for (i, disk) in disks.list().iter().enumerate() {
         let total_space = disk.total_space() as f64 / (1024.0 * 1024.0 * 1024.0);
         let available_space = disk.available_space() as f64 / (1024.0 * 1024.0 * 1024.0);
         let used_space = total_space - available_space;
         let percentage = (used_space / total_space) * 100.0;
+        let file_system = disk.file_system().to_string_lossy().into_owned();
+
+        let label = if disks.list().len() == 1 {
+            "Disk".to_string()
+        } else {
+            match file_system.as_str() {
+                "ext4" | "ext3" | "ext2" => "Disk".to_string(), // Main disk
+                "vfat" | "fat32" => "Disk".to_string(),         // EFI/boot partition
+                "swap" => "Swap".to_string(),                   // Swap partition
+                _ => format!("Disk {}", i + 1),
+            }
+        };
+
         info.push((
-            "Disk".to_string(),
+            label,
             format!(
-                "{:.1}G / {:.1}G ({:.0}%)",
-                used_space, total_space, percentage
+                "{:.1}G / {:.1}G ({:.0}%) - {}",
+                used_space, total_space, percentage, file_system
             ),
         ));
     }
